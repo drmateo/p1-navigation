@@ -134,3 +134,8 @@ Banana*
 # VSCode setting folder
 .vscode
 
+# Jupyter folder
+.ipynb_checkpoints
+
+# Log files
+*.log
