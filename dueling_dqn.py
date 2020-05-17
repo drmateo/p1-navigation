@@ -31,17 +31,46 @@ class QNetwork(nn.Module):
         """
         super(QNetwork, self).__init__()
         self.seed = torch.manual_seed(seed)
-        self.fc1 = nn.Linear(state_size, fc1_units)
-        self.fc2 = nn.Linear(fc1_units, fc2_units)
-        self.fc3 = nn.Linear(fc2_units, action_size)
 
-        self.drop_fc1 = nn.Dropout(p=0.2)
-        self.drop_fc2 = nn.Dropout(p=0.2)
+        self.out_dim = action_size
+
+        # set common feature layer
+        self.common_seq = nn.Sequential(
+            nn.Linear(state_size, fc1_units),
+            nn.ReLU(),
+            nn.Linear(fc1_units, 64),
+            nn.ReLU(),
+        )
+
+        # set value layer
+        self.value_fc1 = nn.Linear(64, 32)
+        self.value_fc2 = nn.Linear(32, 16)
+        self.value_fc3 = nn.Linear(16, 1)
+
+        # set advantage layer
+        self.advantage_fc1 = nn.Linear(64, 32)
+        self.advantage_fc2 = nn.Linear(32, 16)
+        self.advantage_fc3 = nn.Linear(16, action_size)
+
+        self.drop = nn.Dropout(p=0.2)
 
     def forward(self, state):
         """Build a network that maps state -> action values."""
-        x = F.relu(self.fc1(state))
-        x = self.drop_fc1(x)
-        x = F.relu(self.fc2(x))
-        x = self.drop_fc2(x)
-        return self.fc3(x)
+        x = self.common_seq(state)
+        
+        x_value = F.relu((self.value_fc1(x)))
+        x_advantage = F.relu((self.advantage_fc1(x)))
+
+        x_value = F.relu((self.value_fc2(x_value)))
+        x_advantage = F.relu((self.advantage_fc2(x_advantage)))
+
+        x_value = F.relu((self.value_fc3(x_value)))
+        x_advantage = F.relu((self.advantage_fc3(x_advantage)))
+
+        x_value = x_value.expand_as(x_advantage)
+        q = x_value + x_advantage - x_advantage.mean(dim=1, keepdim=True)
+
+        # q = F.softmax(q, dim=-1)
+        # q = q.clamp(min=1e-3)
+
+        return q

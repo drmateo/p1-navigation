@@ -22,12 +22,21 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+from segment_tree import MinSegmentTree, SumSegmentTree
+
+import time
+
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR = 5e-4               # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
+
+PER_E = 1e-2
+PER_A = 0.6
+PER_B = 0.1
+PER_B_inc = 0.001
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -56,14 +65,15 @@ class Agent():
         self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
+
     
     def step(self, state, action, reward, next_state, done):
         # Save experience in replay memory
-        self.memory.add(state, action, reward, next_state, done)
+        self.memory.add(self.t_step, state, action, reward, next_state, done)
         
         # Learn every UPDATE_EVERY time steps.
-        self.t_step = (self.t_step + 1) % UPDATE_EVERY
-        if self.t_step == 0:
+        self.t_step += 1
+        if self.t_step % UPDATE_EVERY == 0:
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
                 experiences = self.memory.sample()
@@ -97,24 +107,34 @@ class Agent():
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
-        states, actions, rewards, next_states, dones = experiences
+        inds, states, actions, rewards, next_states, dones, isw = experiences
 
         # Get max predicted Q values (for next states) from target model
-        best_a = self.qnetwork_local(next_states).detach().argmax(1)
-        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, best_a.view(-1,1))
-        
-        # Compute Q targets for current states 
-        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+        with torch.no_grad():
+            # Double DQN
+            next_action = self.qnetwork_local(next_states).detach().argmax(1)
+        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, next_action.view(-1,1))
 
         # Get expected Q values from local model
         Q_expected = self.qnetwork_local(states).gather(1, actions)
 
-        # Compute loss
-        loss = F.mse_loss(Q_expected, Q_targets)
+        # Compute Q targets for current states 
+        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+
+        # PER: importance sampling before average
+        mse = torch.nn.MSELoss(reduce=False)
+        elementwise_loss = mse(Q_expected, Q_targets)
+        loss = torch.mean(isw*elementwise_loss)
+
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        # PER: update priorities
+        loss_for_prior = elementwise_loss.detach().cpu().numpy()
+        new_priorities = loss_for_prior + PER_E
+        self.memory.update_priorities(inds, new_priorities)
 
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)                     
@@ -149,26 +169,72 @@ class ReplayBuffer:
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["t", "state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+
+        self.b = PER_B
+
+        self.max_priority = 1.0
+
+        # capacity must be positive and a power of 2.
+        tree_capacity = 1
+        while tree_capacity < BUFFER_SIZE:
+            tree_capacity *= 2
+
+        self.sum_tree = SumSegmentTree(tree_capacity)
+        self.min_tree = MinSegmentTree(tree_capacity)
     
-    def add(self, state, action, reward, next_state, done):
+    def add(self, t, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = self.experience(t % BUFFER_SIZE, state, action, reward, next_state, done)
         self.memory.append(e)
-    
+
+        self.sum_tree[t % BUFFER_SIZE] = self.max_priority ** PER_A
+        self.min_tree[t % BUFFER_SIZE] = self.max_priority ** PER_A
+
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
         experiences = random.sample(self.memory, k=self.batch_size)
 
+        idxs = np.vstack([e.t for e in experiences if e is not None]).astype(np.int)
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
+
+        weights = torch.from_numpy(np.array([self.isw(i[0]) for i in idxs])).float().to(device)
   
-        return (states, actions, rewards, next_states, dones)
+        self.b = min(self.b + PER_B_inc, 1.0)
+
+        return (idxs, states, actions, rewards, next_states, dones, weights)
+
+    def update_priorities(self, indices, priorities):
+        """Update priorities of sampled transitions."""
+        assert indices.shape[0] == priorities.shape[0]
+
+        for idx, priority in zip(indices.flatten(), priorities.flatten()):
+            assert priority > 0
+            assert 0 <= idx < len(self)
+            
+            self.sum_tree[idx] = priority ** PER_A
+            self.min_tree[idx] = priority ** PER_A
+
+            self.max_priority = max(self.max_priority, priority)
+
+    def isw(self, idx):
+        # get max weight
+        p_min = self.min_tree.min() / self.sum_tree.sum()
+        max_weight = (p_min * len(self.memory)) ** (-self.b)
+        
+        # calculate weights
+        p_sample = self.sum_tree[idx] / self.sum_tree.sum()
+        weight = (p_sample * len(self)) ** (-self.b)
+        is_weight = weight / max_weight
+
+        return is_weight
 
     def __len__(self):
         """Return the current size of internal memory."""
         return len(self.memory)
+

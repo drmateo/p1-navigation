@@ -16,12 +16,11 @@ import numpy as np
 import random
 from collections import namedtuple, deque
 
-from dqn import QNetwork
+from dueling_dqn import QNetwork
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-
 
 from segment_tree import MinSegmentTree, SumSegmentTree
 
@@ -35,9 +34,9 @@ LR = 5e-4               # learning rate
 UPDATE_EVERY = 4        # how often to update the network
 
 PER_E = 1e-2
-PER_A = 0.6
-PER_B = 0.1
-PER_B_inc = 0.001
+PER_A = 0.7
+PER_B = 0.5
+PER_B_inc = 1e-4
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -111,7 +110,10 @@ class Agent():
         inds, states, actions, rewards, next_states, dones, isw = experiences
 
         # Get max predicted Q values (for next states) from target model
-        Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+        with torch.no_grad():
+            # Double DQN
+            next_action = self.qnetwork_local(next_states).detach().argmax(1)
+        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, next_action.view(-1,1))
 
         # Get expected Q values from local model
         Q_expected = self.qnetwork_local(states).gather(1, actions)
@@ -127,6 +129,7 @@ class Agent():
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
         self.optimizer.step()
 
         # PER: update priorities
@@ -202,9 +205,9 @@ class ReplayBuffer:
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
 
         weights = torch.from_numpy(np.array([self.isw(i[0]) for i in idxs])).float().to(device)
-
+  
         self.b = min(self.b + PER_B_inc, 1.0)
-          
+
         return (idxs, states, actions, rewards, next_states, dones, weights)
 
     def update_priorities(self, indices, priorities):
@@ -235,4 +238,3 @@ class ReplayBuffer:
     def __len__(self):
         """Return the current size of internal memory."""
         return len(self.memory)
-

@@ -29,11 +29,6 @@ TAU = 1e-3              # for soft update of target parameters
 LR = 5e-4               # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
 
-PER_E = 1e-2
-PER_A = 0.6
-PER_B = 0.4
-PER_B_inc = 0.001
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Agent():
@@ -104,10 +99,11 @@ class Agent():
         """
         states, actions, rewards, next_states, dones = experiences
 
-        # Get max predicted Q values (for next states) from target model
-        best_a = self.qnetwork_local(next_states).detach().argmax(1)
-        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, best_a.view(-1,1))
-        
+        # Double DQN
+        with torch.no_grad():
+            next_action = self.qnetwork_local(next_states).detach().argmax(1)
+        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, next_action.view(-1,1))
+
         # Compute Q targets for current states 
         Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
 
@@ -115,9 +111,7 @@ class Agent():
         Q_expected = self.qnetwork_local(states).gather(1, actions)
 
         # Compute loss
-        isw = self.memory.isw(torch.abs(Q_expected - Q_targets) + PER_E)
-        loss = F.mse_loss(isw * Q_expected, isw * Q_targets)
-
+        loss = F.mse_loss(Q_expected, Q_targets)
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
@@ -158,14 +152,12 @@ class ReplayBuffer:
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
-
-        self.b = PER_B
     
     def add(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
         e = self.experience(state, action, reward, next_state, done)
         self.memory.append(e)
-
+    
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
         experiences = random.sample(self.memory, k=self.batch_size)
@@ -177,22 +169,6 @@ class ReplayBuffer:
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
   
         return (states, actions, rewards, next_states, dones)
-
-    def isw(self, priorities):
-        # udpate priority distribution
-        p_sample_tensor = torch.ones(BATCH_SIZE).to(device) * PER_E
-        for i, priority in zip(range(len(priorities)), priorities):
-            p_sample_tensor[i] = priority ** PER_A
-
-        # sampling probability
-        probability = p_sample_tensor / p_sample_tensor.detach().sum()
-
-        # importance sampling weight
-        is_weight = torch.pow(BUFFER_SIZE * probability, -self.b).detach()
-        # is_weight /= is_weight.max()
-        self.b = np.min([1., self.b + PER_B_inc])
-
-        return is_weight
 
     def __len__(self):
         """Return the current size of internal memory."""
