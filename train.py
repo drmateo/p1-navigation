@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from unityagents import UnityEnvironment
 import numpy as np
 
-from dqn_agent import Agent
+from per_double_dqn_agent import Agent
 
 # use ggplot style for more sophisticated visuals
 plt.style.use('ggplot')
@@ -137,9 +137,9 @@ def dqn(env, agent, n_episodes=2000, eps_start=1.0, eps_end=0.01, eps_decay=0.99
 
 if __name__ == "__main__":
 
-    env = UnityEnvironment(file_name="Banana.x86_64", seed=7523)
-    agent = Agent(state_size=37, action_size=4, seed=7919)
+    env = UnityEnvironment(file_name="Banana.x86_64", seed=int(time.time()*1e6) % int(2^18))
+    agent = Agent(state_size=37, action_size=4, seed=int(time.time()*1e6))
     agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
-    score = dqn(env, agent, n_episodes=10000, eps_start=1.0, eps_end=0.01, eps_decay=0.998, window_size=100, do_visualization=True)
+    score = dqn(env, agent, n_episodes=2000, eps_start=1.0, eps_end=0.01, eps_decay=0.995, window_size=100, do_visualization=True)
 
-    nv.close()
+    env.close()

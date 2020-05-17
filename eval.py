@@ -21,18 +21,20 @@ import matplotlib.pyplot as plt
 from unityagents import UnityEnvironment
 import numpy as np
 
-from dqn_agent import Agent
+import time
+
+from per_dqn_agent import Agent
 
 
 if __name__ == "__main__":
 
-    env = UnityEnvironment(file_name="Banana.x86_64", seed=0)
+    env = UnityEnvironment(file_name="Banana.x86_64", seed=int(time.time()*1e6) % int(2^18))
 
     # get the default brain
     brain_name = env.brain_names[0]
     brain = env.brains[brain_name]
 
-    agent = Agent(state_size=37, action_size=4, seed=0)
+    agent = Agent(state_size=37, action_size=4, seed=int(time.time()*1e6))
     agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     
     for i in range(3):

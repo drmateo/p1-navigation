@@ -22,12 +22,19 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+import time
+
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR = 5e-4               # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
+
+PER_E = 1e-2
+PER_A = 0.6
+PER_B = 0.1
+PER_B_inc = 0.001
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -56,14 +63,15 @@ class Agent():
         self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
+
     
     def step(self, state, action, reward, next_state, done):
         # Save experience in replay memory
-        self.memory.add(state, action, reward, next_state, done)
+        self.memory.add(self.t_step, state, action, reward, next_state, done)
         
         # Learn every UPDATE_EVERY time steps.
-        self.t_step = (self.t_step + 1) % UPDATE_EVERY
-        if self.t_step == 0:
+        self.t_step += 1
+        if self.t_step % UPDATE_EVERY == 0:
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
                 experiences = self.memory.sample()
@@ -97,7 +105,7 @@ class Agent():
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
-        states, actions, rewards, next_states, dones = experiences
+        inds, states, actions, rewards, next_states, dones = experiences
 
         # Get max predicted Q values (for next states) from target model
         Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
@@ -109,7 +117,9 @@ class Agent():
         Q_expected = self.qnetwork_local(states).gather(1, actions)
 
         # Compute loss
-        loss = F.mse_loss(Q_expected, Q_targets)
+        isw = self.memory.isw(inds, torch.abs(Q_expected - Q_targets) + PER_E)
+        loss = F.mse_loss(isw * Q_expected, isw * Q_targets)
+
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
@@ -148,26 +158,47 @@ class ReplayBuffer:
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["t", "state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+
+        self.b = PER_B
     
-    def add(self, state, action, reward, next_state, done):
+    def add(self, t, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = self.experience(t % BUFFER_SIZE, state, action, reward, next_state, done)
         self.memory.append(e)
-    
+
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
         experiences = random.sample(self.memory, k=self.batch_size)
 
+        idxs = np.vstack([e.t for e in experiences if e is not None]).astype(np.int)
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
   
-        return (states, actions, rewards, next_states, dones)
+        return (idxs, states, actions, rewards, next_states, dones)
+
+    def isw(self, inds, priorities):
+        # udpate priority distribution
+        p_sample_tensor = torch.ones(BATCH_SIZE).to(device) * PER_E
+        for i, ind, priority in zip(range(len(inds)), inds.flatten(), priorities):
+            # self.p_memory_tensor[ind] = priority ** PER_A
+            p_sample_tensor[i] = priority ** PER_A
+
+        # sampling probability
+        probability = p_sample_tensor / p_sample_tensor.detach().sum()
+
+        # importance sampling weight
+        is_weight = torch.pow(BUFFER_SIZE * probability, -self.b).detach()
+        # is_weight /= is_weight.max()
+        self.b = np.min([1., self.b + PER_B_inc])
+
+        return is_weight
 
     def __len__(self):
         """Return the current size of internal memory."""
         return len(self.memory)
+
