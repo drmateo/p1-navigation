@@ -23,7 +23,7 @@ import numpy as np
 
 import time
 
-from per_ddqn_agent import Agent
+from dueling_ddqn_agent import Agent
 
 
 if __name__ == "__main__":

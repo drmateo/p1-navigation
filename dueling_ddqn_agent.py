@@ -25,6 +25,7 @@ import torch.optim as optim
 from segment_tree import MinSegmentTree, SumSegmentTree
 
 import time
+import math
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
@@ -33,10 +34,9 @@ TAU = 1e-3              # for soft update of target parameters
 LR = 5e-4               # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
 
-PER_E = 1e-2
-PER_A = 0.7
-PER_B = 0.5
-PER_B_inc = 1e-4
+PER_E = 1e-6
+PER_A = 0.6
+PER_B = 0.4
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -59,7 +59,7 @@ class Agent():
         # Q-Network
         self.qnetwork_local = QNetwork(state_size, action_size, seed).to(device)
         self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
-        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR / 4.0)
 
         # Replay memory
         self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
@@ -79,7 +79,7 @@ class Agent():
                 experiences = self.memory.sample()
                 self.learn(experiences, GAMMA)
 
-    def act(self, state, eps=0.):
+    def act(self, state, eps=0., beta=PER_B):
         """Returns actions for given state as per current policy.
         
         Params
@@ -93,11 +93,14 @@ class Agent():
             action_values = self.qnetwork_local(state)
         self.qnetwork_local.train()
 
+        self.memory.b = beta
+
         # Epsilon-greedy action selection
         if random.random() > eps:
             return np.argmax(action_values.cpu().data.numpy())
         else:
             return random.choice(np.arange(self.action_size))
+
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -129,7 +132,8 @@ class Agent():
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
+        self.qnetwork_local.common[0].weight.grad *= 1.0/math.sqrt(2.0)
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 1.0)
         self.optimizer.step()
 
         # PER: update priorities
@@ -173,8 +177,6 @@ class ReplayBuffer:
         self.experience = namedtuple("Experience", field_names=["t", "state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
 
-        self.b = PER_B
-
         self.max_priority = 1.0
 
         # capacity must be positive and a power of 2.
@@ -195,18 +197,28 @@ class ReplayBuffer:
 
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        experiences = random.sample(self.memory, k=self.batch_size)
+        # experiences = random.sample(self.memory, k=self.batch_size)
 
-        idxs = np.vstack([e.t for e in experiences if e is not None]).astype(np.int)
-        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
 
-        weights = torch.from_numpy(np.array([self.isw(i[0]) for i in idxs])).float().to(device)
-  
-        self.b = min(self.b + PER_B_inc, 1.0)
+        indices = []
+        p_total = self.sum_tree.sum(0, len(self) - 1)
+        segment = p_total / self.batch_size
+        
+        for i in range(self.batch_size):
+            a = segment * i
+            b = segment * (i + 1)
+            upperbound = random.uniform(a, b)
+            idx = self.sum_tree.retrieve(upperbound)
+            indices.append(idx)
+
+
+        idxs = np.vstack(indices).astype(np.int)
+        states = torch.from_numpy(np.vstack([self.memory[i].state for i in indices])).float().to(device)
+        actions = torch.from_numpy(np.vstack([self.memory[i].action for i in indices])).long().to(device)
+        rewards = torch.from_numpy(np.vstack([self.memory[i].reward for i in indices])).float().to(device)
+        next_states = torch.from_numpy(np.vstack([self.memory[i].next_state for i in indices])).float().to(device)
+        dones = torch.from_numpy(np.vstack([self.memory[i].done for i in indices]).astype(np.uint8)).float().to(device)
+        weights = torch.from_numpy(np.array([self.isw(i) for i in indices])).float().to(device)
 
         return (idxs, states, actions, rewards, next_states, dones, weights)
 
@@ -227,6 +239,7 @@ class ReplayBuffer:
         # get max weight
         p_min = self.min_tree.min() / self.sum_tree.sum()
         max_weight = (p_min * len(self.memory)) ** (-self.b)
+        # print(self.b)
         
         # calculate weights
         p_sample = self.sum_tree[idx] / self.sum_tree.sum()

@@ -19,7 +19,7 @@ import torch.nn.functional as F
 class QNetwork(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=64):
+    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=32):
         """Initialize parameters and build model.
         Params
         ======
@@ -34,43 +34,37 @@ class QNetwork(nn.Module):
 
         self.out_dim = action_size
 
+        self.drop = nn.Dropout(p=0.08)
+        self.drop_hidden = nn.Dropout(p=0.05)
+
         # set common feature layer
-        self.common_seq = nn.Sequential(
+        self.common = nn.Sequential(
             nn.Linear(state_size, fc1_units),
             nn.ReLU(),
-            nn.Linear(fc1_units, 64),
-            nn.ReLU(),
+            # self.drop,
         )
 
-        # set value layer
-        self.value_fc1 = nn.Linear(64, 32)
-        self.value_fc2 = nn.Linear(32, 16)
-        self.value_fc3 = nn.Linear(16, 1)
+        self.value = nn.Sequential(
+            nn.Linear(fc1_units, fc2_units),
+            nn.ReLU(),
+            nn.Linear(fc2_units, 1),
+        )
 
-        # set advantage layer
-        self.advantage_fc1 = nn.Linear(64, 32)
-        self.advantage_fc2 = nn.Linear(32, 16)
-        self.advantage_fc3 = nn.Linear(16, action_size)
-
-        self.drop = nn.Dropout(p=0.2)
+        self.advantage = nn.Sequential(
+            nn.Linear(fc1_units, fc2_units),
+            nn.ReLU(),
+            nn.Linear(fc2_units, 4),
+        )
 
     def forward(self, state):
         """Build a network that maps state -> action values."""
-        x = self.common_seq(state)
-        
-        x_value = F.relu((self.value_fc1(x)))
-        x_advantage = F.relu((self.advantage_fc1(x)))
+        x = self.common(state)
+        x_value = self.value(x)
+        x_advantage = self.advantage(x)
 
-        x_value = F.relu((self.value_fc2(x_value)))
-        x_advantage = F.relu((self.advantage_fc2(x_advantage)))
-
-        x_value = F.relu((self.value_fc3(x_value)))
-        x_advantage = F.relu((self.advantage_fc3(x_advantage)))
-
-        x_value = x_value.expand_as(x_advantage)
-        q = x_value + x_advantage - x_advantage.mean(dim=1, keepdim=True)
+        q = x_value.expand_as(x_advantage) \
+            + x_advantage - x_advantage.mean(dim=1, keepdim=True)
 
         # q = F.softmax(q, dim=-1)
-        # q = q.clamp(min=1e-3)
 
         return q
