@@ -26,6 +26,7 @@ from segment_tree import MinSegmentTree, SumSegmentTree
 
 import time
 import math
+import copy
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
@@ -77,7 +78,9 @@ class Agent():
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
                 experiences = self.memory.sample()
-                self.learn(experiences, GAMMA)
+                return self.learn(experiences, GAMMA)
+
+        return 0.0
 
     def act(self, state, eps=0., beta=PER_B):
         """Returns actions for given state as per current policy.
@@ -141,8 +144,11 @@ class Agent():
         new_priorities = loss_for_prior + PER_E
         self.memory.update_priorities(inds, new_priorities)
 
+
         # ------------------- update target network ------------------- #
-        self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)                     
+        self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)    
+
+        return torch.mean(elementwise_loss).cpu().detach().numpy()
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
@@ -171,35 +177,34 @@ class ReplayBuffer:
             batch_size (int): size of each training batch
             seed (int): random seed
         """
+        self.max_priority = 1.0
+
+        # capacity must be positive and a power of 2.
+        self.tree_capacity = 1
+        while self.tree_capacity < buffer_size:
+            self.tree_capacity *= 2
+
+        self.sum_tree = SumSegmentTree(self.tree_capacity)
+        self.min_tree = MinSegmentTree(self.tree_capacity)
+
+
         self.action_size = action_size
-        self.memory = deque(maxlen=buffer_size)  
+        self.memory = np.array([None]*self.tree_capacity)#deque(maxlen=buffer_size)  
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["t", "state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
 
-        self.max_priority = 1.0
-
-        # capacity must be positive and a power of 2.
-        tree_capacity = 1
-        while tree_capacity < BUFFER_SIZE:
-            tree_capacity *= 2
-
-        self.sum_tree = SumSegmentTree(tree_capacity)
-        self.min_tree = MinSegmentTree(tree_capacity)
     
     def add(self, t, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(t % BUFFER_SIZE, state, action, reward, next_state, done)
-        self.memory.append(e)
+        e = self.experience(t % self.tree_capacity, state, action, reward, next_state, done)
+        self.memory[t % self.tree_capacity] = e
 
-        self.sum_tree[t % BUFFER_SIZE] = self.max_priority ** PER_A
-        self.min_tree[t % BUFFER_SIZE] = self.max_priority ** PER_A
+        self.sum_tree[t % self.tree_capacity] = self.max_priority ** PER_A
+        self.min_tree[t % self.tree_capacity] = self.max_priority ** PER_A
 
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        # experiences = random.sample(self.memory, k=self.batch_size)
-
-
         indices = []
         p_total = self.sum_tree.sum(0, len(self) - 1)
         segment = p_total / self.batch_size

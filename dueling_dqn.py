@@ -32,16 +32,11 @@ class QNetwork(nn.Module):
         super(QNetwork, self).__init__()
         self.seed = torch.manual_seed(seed)
 
-        self.out_dim = action_size
-
-        self.drop = nn.Dropout(p=0.08)
-        self.drop_hidden = nn.Dropout(p=0.05)
-
         # set common feature layer
         self.common = nn.Sequential(
             nn.Linear(state_size, fc1_units),
             nn.ReLU(),
-            # self.drop,
+            nn.Dropout(p=0.2),
         )
 
         self.value = nn.Sequential(
@@ -64,7 +59,5 @@ class QNetwork(nn.Module):
 
         q = x_value.expand_as(x_advantage) \
             + x_advantage - x_advantage.mean(dim=1, keepdim=True)
-
-        # q = F.softmax(q, dim=-1)
 
         return q
