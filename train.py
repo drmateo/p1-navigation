@@ -58,7 +58,7 @@ class Monitor ():
         self.ax['top'].legend()
 
         self.ax['midd'].set_xlim(0, n_episodes)
-        self.ax['midd'].set_ylim(0, 5.0)
+        self.ax['midd'].set_ylim(0, 1.0)
         self.val['mse'], = self.ax['midd'].plot([], [], '-', color='burlywood')
 
         self.ax['down'].set_xlim(0, n_episodes)
@@ -128,6 +128,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
         score = 0                                          # initialize the score
         mse = 0
         
+        t = 0
         # Train agent
         while True:
             action = agent.act(state, eps, beta)
@@ -135,13 +136,15 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
             next_state = env_info.vector_observations[0]   # get the next state
             reward = env_info.rewards[0]                   # get the reward
             done = env_info.local_done[0]                  # see if episode has finished
-            agent.step(state, action, reward, next_state, done)
+            e, update = agent.step(state, action, reward, next_state, done)
+            mse += e
             
             score += reward                                # update the score
             state = next_state                             # roll over the state to next time step
             
             if do_visualization: monitor.flush()
             
+            t += 1 if update else 0
             if done:                                       # exit loop if episode finished
                 break
             
@@ -151,6 +154,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 
         track['eps'].append(eps)                            # save eps
         track['beta'].append(beta)                          # save eps
+        track['mse'].append(mse / t)
 
         eps = max(eps_end, eps_decay*eps) # decrease epsilon
         beta = min(beta + beta_inc, 1.0)
@@ -182,12 +186,6 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
         track['valid_score_window'].append(np.mean(np.array(valid_score)))                 # save most recent score
         track['valid_score'].append(np.mean(np.array(valid_score)))                        # save most recent score
         track['valid_score_mean'].append(np.mean(track['valid_score_window']))  # save most recent mean score
-        
-        diff = np.array(track['train_score_mean'][-1:]) - np.array(track['valid_score_mean'][-1:])
-        se = np.sqrt(diff**2.0)
-
-        track['se'].append(se)
-        track['mse'].append(np.mean(track['se'][-info_update_rate:]))
 
         print('\rEpisode {}\tAverage Score(train): {:.2f}\tAverage Score(valid): {:.2f}  '
                 '\tMSE: {:.2E}'.format(i_episode, track['train_score_mean'][-1],
@@ -205,6 +203,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 
             # Stop condition
             # if track['mse'][-1] < 1e-3:
+            if do_visualization: monitor.draw(track, new_size=len(track['valid_score_mean']))
             #     break
         
         
@@ -218,7 +217,7 @@ if __name__ == "__main__":
     env = UnityEnvironment(file_name="Banana.x86_64", seed=0) #'''int(time.time()*1e6)%int(2^18)'''
     agent = Agent(state_size=37, action_size=4, seed=0) # '''int(time.time()*1e6)'''
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
-    score = dqn(env, agent, n_episodes=2000, n_validations=4, eps_start=1.0, eps_end=0.1,
-        eps_decay=0.998, window_size=50, do_visualization=True, info_update_rate=10)
+    score = dqn(env, agent, n_episodes=2000, n_validations=1, eps_start=1.0, eps_end=0.001,
+        eps_decay=0.995, window_size=50, do_visualization=True, info_update_rate=100)
 
     env.close()

@@ -28,12 +28,12 @@ import time
 import math
 import copy
 
-BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 64         # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
-LR = 5e-4               # learning rate 
-UPDATE_EVERY = 4        # how often to update the network
+BUFFER_SIZE = int(2**18)    # replay buffer size
+BATCH_SIZE = 64             # minibatch size
+GAMMA = 0.99                # discount factor
+TAU = 1e-3                  # for soft update of target parameters
+LR = 5e-4                # learning rate 
+UPDATE_EVERY = 4            # how often to update the network
 
 PER_E = 1e-6
 PER_A = 0.6
@@ -62,6 +62,9 @@ class Agent():
         self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR / 4.0)
 
+        # clone local parameters into target network
+        self.qnetwork_target.load_state_dict(self.qnetwork_local.state_dict())
+
         # Replay memory
         self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
@@ -78,9 +81,9 @@ class Agent():
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
                 experiences = self.memory.sample()
-                return self.learn(experiences, GAMMA)
+                return self.learn(experiences, GAMMA), True
 
-        return 0.0
+        return 0.0, False
 
     def act(self, state, eps=0., beta=PER_B):
         """Returns actions for given state as per current policy.
@@ -132,23 +135,31 @@ class Agent():
         elementwise_loss = mse(Q_expected, Q_targets)
         loss = torch.mean(isw*elementwise_loss)
 
+        # save old local network parameters
+        qnetwork_old = copy.deepcopy(self.qnetwork_local.state_dict())
+
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.qnetwork_local.common[0].weight.grad *= 1.0/math.sqrt(2.0)
-        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
         self.optimizer.step()
+
+        # get updated local network parameters
+        qnetwork_new = self.qnetwork_local.state_dict()
+
+        # get update parameters rate (L2) during last optimization step
+        diff = sum((x - y).norm() for x, y in zip(self.qnetwork_local.state_dict().values(), self.qnetwork_target.state_dict().values()))
 
         # PER: update priorities
         loss_for_prior = elementwise_loss.detach().cpu().numpy()
         new_priorities = loss_for_prior + PER_E
         self.memory.update_priorities(inds, new_priorities)
 
-
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)    
 
-        return torch.mean(elementwise_loss).cpu().detach().numpy()
+        return diff.item()
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
