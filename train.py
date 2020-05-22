@@ -75,6 +75,10 @@ class Monitor ():
         self.ax['midd'].set_xlim(0, max(self.n_episodes, new_size))
         self.ax['down'].set_xlim(0, max(self.n_episodes, new_size))
 
+        self.ax['midd'].set_ylim(0, max(1, max(val['mse']))+0.1)
+        self.ax['top'].set_ylim(min(min(val['train_score']), min(val['valid_score'])) - 1, max(max(val['train_score']), max(val['valid_score'])) + 1)
+        
+
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
     
@@ -116,6 +120,9 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
     eps = eps_start                    # initialize epsilon
     beta = PER_B
     beta_inc = (1.0 - beta) / n_episodes
+    eps_decay = (eps_start - eps_end) / n_episodes
+
+    k = 4
 
     train = 0
     i_episode = 0
@@ -126,27 +133,44 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
         action_size = brain.vector_action_space_size       # number of actions
         state = env_info.vector_observations[0]            # get the current state
         score = 0                                          # initialize the score
-        mse = 0
+        mse = []
+
+        state_stack = deque(maxlen=4)
+        next_state_stack = deque(maxlen=4)
+        for i in range(1,4):
+            state_stack.append(state)
+            next_state_stack.append(state)
         
         t = 0
+        e = 0.0
         # Train agent
         while True:
-            action = agent.act(state, eps, beta)
-            env_info = env.step(action)[brain_name]        # send the action to the environment
-            next_state = env_info.vector_observations[0]   # get the next state
-            reward = env_info.rewards[0]                   # get the reward
-            done = env_info.local_done[0]                  # see if episode has finished
-            e, update = agent.step(state, action, reward, next_state, done)
-            mse += e
+            if t%4 == 0:
+                state_stack.append(state)
+                s = np.array(list(state_stack)).flatten()
+                action = agent.act(s, eps, beta)
+
+            env_info = env.step(action)[brain_name]             # send the action to the environment
+            reward = env_info.rewards[0]                        # get the reward
+            done = env_info.local_done[0]                       # see if episode has finished
+
+            if t%4 == 0:
+                next_state = env_info.vector_observations[0]    # get the next state
+                next_state_stack.append(next_state)
+
+                next_s = np.array(list(next_state_stack)).flatten()
+                e, update = agent.step(s, action, reward, next_s, done)
+                if update: mse.append(e)
+
+                state = next_state                              # roll over the state to next time step
             
-            score += reward                                # update the score
-            state = next_state                             # roll over the state to next time step
+            score += reward                                     # update the score
             
             if do_visualization: monitor.flush()
-            
-            t += 1 if update else 0
-            if done:                                       # exit loop if episode finished
+            if done:                                            # exit loop if episode finished
                 break
+
+            t += 1
             
         track['train_score_window'].append(score)                 # save most recent score
         track['train_score'].append(score)                        # save most recent score
@@ -154,9 +178,10 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 
         track['eps'].append(eps)                            # save eps
         track['beta'].append(beta)                          # save eps
-        track['mse'].append(mse / t)
+        track['mse'].append(np.sum(mse) / len(mse))
 
-        eps = max(eps_end, eps_decay*eps) # decrease epsilon
+        # eps = max(eps_end, eps_decay*eps) # decrease epsilon
+        eps = max(eps_end, eps - eps_decay)
         beta = min(beta + beta_inc, 1.0)
 
         # Validate agent
@@ -167,20 +192,28 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
             state = env_info.vector_observations[0]            # get the current state
             score = 0                                          # initialize the score
 
+            state_stack = deque(maxlen=4)
+            for i in range(1,4):
+                state_stack.append(state)
+
+            t = 0
             while True:
-                action = agent.act(state)
+                if t%4 == 0:
+                    state_stack.append(state)
+                    s = np.array(list(state_stack)).flatten()
+                    action = agent.act(s)
+
                 env_info = env.step(action)[brain_name]        # send the action to the environment
-                next_state = env_info.vector_observations[0]   # get the next state
                 reward = env_info.rewards[0]                   # get the reward
                 done = env_info.local_done[0]                  # see if episode has finished
-                state = next_state                             # roll over the state to next time step
+                state = env_info.vector_observations[0]   # get the next state
                 score += reward                                # update the score
                 
                 if do_visualization: monitor.flush()
-                
                 if done:                                       # exit loop if episode finished
                     break
-                
+                    
+                t += 1
             valid_score.append(score)
 
         track['valid_score_window'].append(np.mean(np.array(valid_score)))                 # save most recent score
@@ -215,9 +248,9 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 if __name__ == "__main__":
 
     env = UnityEnvironment(file_name="Banana.x86_64", seed=0) #'''int(time.time()*1e6)%int(2^18)'''
-    agent = Agent(state_size=37, action_size=4, seed=0) # '''int(time.time()*1e6)'''
+    agent = Agent(state_size=37 * 4, action_size=4, seed=0) # '''int(time.time()*1e6)'''
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
-    score = dqn(env, agent, n_episodes=2000, n_validations=1, eps_start=1.0, eps_end=0.001,
-        eps_decay=0.995, window_size=50, do_visualization=True, info_update_rate=100)
+    score = dqn(env, agent, n_episodes=int(1e5), n_validations=1, eps_start=1.0, eps_end=0.01,
+        eps_decay=0.998, window_size=1000, do_visualization=True, info_update_rate=100)
 
     env.close()

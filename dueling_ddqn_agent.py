@@ -28,12 +28,13 @@ import time
 import math
 import copy
 
-BUFFER_SIZE = int(2**18)    # replay buffer size
-BATCH_SIZE = 64             # minibatch size
-GAMMA = 0.99                # discount factor
-TAU = 1e-3                  # for soft update of target parameters
-LR = 5e-4                # learning rate 
-UPDATE_EVERY = 4            # how often to update the network
+BUFFER_SIZE = int(1e5)  # replay buffer size
+BATCH_SIZE = 32         # minibatch size
+GAMMA = 0.99            # discount factor
+ALPHA = 2.5e-4          # for soft update of target parameters
+TAU = int(1e3)
+LR = 6.25e-5            # learning rate 
+UPDATE_EVERY = 4        # how often to update the network
 
 PER_E = 1e-6
 PER_A = 0.6
@@ -75,15 +76,22 @@ class Agent():
         # Save experience in replay memory
         self.memory.add(self.t_step, state, action, reward, next_state, done)
         
+        diff = 0.0
+
         # Learn every UPDATE_EVERY time steps.
         self.t_step += 1
         if self.t_step % UPDATE_EVERY == 0:
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
                 experiences = self.memory.sample()
-                return self.learn(experiences, GAMMA), True
+                diff = self.learn(experiences, GAMMA)
 
-        return 0.0, False
+        # ------------------- update target network ------------------- #
+        if self.t_step % TAU == 0:
+            if len(self.memory) > BATCH_SIZE:
+                self.soft_update(self.qnetwork_local, self.qnetwork_target, ALPHA)    
+
+        return diff, False if diff == 0.0 else True
 
     def act(self, state, eps=0., beta=PER_B):
         """Returns actions for given state as per current policy.
@@ -155,9 +163,6 @@ class Agent():
         loss_for_prior = elementwise_loss.detach().cpu().numpy()
         new_priorities = loss_for_prior + PER_E
         self.memory.update_priorities(inds, new_priorities)
-
-        # ------------------- update target network ------------------- #
-        self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)    
 
         return diff.item()
 

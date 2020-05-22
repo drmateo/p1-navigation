@@ -19,7 +19,7 @@ import torch.nn.functional as F
 class QNetwork(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=32):
+    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=64):
         """Initialize parameters and build model.
         Params
         ======
@@ -31,23 +31,37 @@ class QNetwork(nn.Module):
         """
         super(QNetwork, self).__init__()
         self.seed = torch.manual_seed(seed)
-
+        
         # set common feature layer
         self.common = nn.Sequential(
             nn.Linear(state_size, fc1_units),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=0.9),
+            nn.Linear(fc1_units, fc1_units),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Linear(fc1_units, fc1_units),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
         )
 
         self.value = nn.Sequential(
             nn.Linear(fc1_units, fc2_units),
             nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Linear(fc2_units, fc2_units),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
             nn.Linear(fc2_units, 1),
         )
 
         self.advantage = nn.Sequential(
             nn.Linear(fc1_units, fc2_units),
             nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Linear(fc2_units, fc2_units),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
             nn.Linear(fc2_units, 4),
         )
 
