@@ -61,7 +61,8 @@ class Agent():
         # Q-Network
         self.qnetwork_local = QNetwork(state_size, action_size, seed).to(device)
         self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
-        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR / 4.0)
+        self.optimizer = optim.RMSprop(self.qnetwork_local.parameters(), lr=LR, momentum=.95)
+        #self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR / 4.0)
 
         # clone local parameters into target network
         self.qnetwork_target.load_state_dict(self.qnetwork_local.state_dict())
@@ -114,7 +115,6 @@ class Agent():
             return np.argmax(action_values.cpu().data.numpy())
         else:
             return random.choice(np.arange(self.action_size))
-
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.

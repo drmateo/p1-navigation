@@ -19,7 +19,7 @@ import torch.nn.functional as F
 class QNetwork(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=64):
+    def __init__(self, state_size, action_size, seed, fc1_units=256, fc2_units=64):
         """Initialize parameters and build model.
         Params
         ======
@@ -36,19 +36,16 @@ class QNetwork(nn.Module):
         self.common = nn.Sequential(
             nn.Linear(state_size, fc1_units),
             nn.ReLU(),
-            nn.Dropout(p=0.9),
-            nn.Linear(fc1_units, fc1_units),
+            nn.Dropout(p=0.5),
+            nn.Linear(fc1_units, 128),
             nn.ReLU(),
             nn.Dropout(p=0.5),
-            nn.Linear(fc1_units, fc1_units),
+            nn.Linear(128, fc2_units),
             nn.ReLU(),
             nn.Dropout(p=0.5),
         )
 
         self.value = nn.Sequential(
-            nn.Linear(fc1_units, fc2_units),
-            nn.ReLU(),
-            nn.Dropout(p=0.5),
             nn.Linear(fc2_units, fc2_units),
             nn.ReLU(),
             nn.Dropout(p=0.5),
@@ -56,9 +53,6 @@ class QNetwork(nn.Module):
         )
 
         self.advantage = nn.Sequential(
-            nn.Linear(fc1_units, fc2_units),
-            nn.ReLU(),
-            nn.Dropout(p=0.5),
             nn.Linear(fc2_units, fc2_units),
             nn.ReLU(),
             nn.Dropout(p=0.5),
