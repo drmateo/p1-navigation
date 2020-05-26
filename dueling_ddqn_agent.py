@@ -149,7 +149,7 @@ class Agent():
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
-        self.qnetwork_local.common[0].weight.grad *= 1.0/math.sqrt(2.0)
+        self.qnetwork_local.common[-3].weight.grad *= 1.0/math.sqrt(2.0)
         torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
         self.optimizer.step()
 

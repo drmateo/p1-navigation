@@ -122,8 +122,8 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
     beta_inc = (1.0 - beta) / n_episodes
     eps_decay = (eps_start - eps_end) / n_episodes
 
-    k = 4
-
+    k = 2
+    frame_skiped = 1
 
     t = 0
     while True:
@@ -138,7 +138,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
             next_state_stack.append(state)
 
         while True:
-            if t%1 == 0:
+            if t%frame_skiped == 0:
                 state_stack.append(state)
                 s = np.array(list(state_stack)).flatten()
                 action = random.choice(np.arange(4))
@@ -147,7 +147,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
             reward = env_info.rewards[0]                        # get the reward
             done = env_info.local_done[0]                       # see if episode has finished
 
-            if t%1 == 0:
+            if t%frame_skiped == 0:
                 next_state = env_info.vector_observations[0]    # get the next state
                 next_state_stack.append(next_state)
 
@@ -191,7 +191,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
         e = 0.0
         # Train agent
         while True:
-            if t%1 == 0:
+            if t%frame_skiped == 0:
                 state_stack.append(state)
                 s = np.array(list(state_stack)).flatten()
                 action = agent.act(s, eps, beta)
@@ -200,13 +200,16 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
             reward = env_info.rewards[0]                        # get the reward
             done = env_info.local_done[0]                       # see if episode has finished
 
-            if t%1 == 0:
+            if t%k == 0: r = 0
+            r += reward
+
+            if t%frame_skiped == 0:
                 next_state = env_info.vector_observations[0]    # get the next state
                 next_state_stack.append(next_state)
 
                 next_s = np.array(list(next_state_stack)).flatten()
 
-                e, update = agent.step(s, action, reward, next_s, done)
+                e, update = agent.step(s, action, r, next_s, done)
                 if update: mse.append(e)
 
                 state = next_state                              # roll over the state to next time step
@@ -245,7 +248,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 
             t = 0
             while True:
-                if t%1 == 0:
+                if t%frame_skiped == 0:
                     state_stack.append(state)
                     s = np.array(list(state_stack)).flatten()
                     action = agent.act(s)
@@ -295,9 +298,9 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
 if __name__ == "__main__":
 
     env = UnityEnvironment(file_name="Banana.x86_64", seed=0) #'''int(time.time()*1e6)%int(2^18)'''
-    agent = Agent(state_size=37 * 4, action_size=4, seed=0) # '''int(time.time()*1e6)'''
+    agent = Agent(state_size=37 * 2, action_size=4, seed=0) # '''int(time.time()*1e6)'''
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     score = dqn(env, agent, n_episodes=int(1e5), n_validations=1, eps_start=1.0, eps_end=0.1,
-        eps_decay=0.998, window_size=1000, do_visualization=True, info_update_rate=100)
+        eps_decay=0.999, window_size=1000, do_visualization=True, info_update_rate=100)
 
     env.close()
