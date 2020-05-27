@@ -125,6 +125,7 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
     k = 2
     frame_skiped = 1
 
+
     t = 0
     while True:
         env_info = env.reset(train_mode=True)[brain_name] # reset the environment
@@ -301,6 +302,6 @@ if __name__ == "__main__":
     agent = Agent(state_size=37 * 2, action_size=4, seed=0) # '''int(time.time()*1e6)'''
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     score = dqn(env, agent, n_episodes=int(1e5), n_validations=1, eps_start=1.0, eps_end=0.1,
-        eps_decay=0.999, window_size=1000, do_visualization=True, info_update_rate=100)
+        eps_decay=0.998, window_size=1000, do_visualization=True, info_update_rate=100)
 
     env.close()
