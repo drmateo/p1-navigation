@@ -125,7 +125,6 @@ def dqn(env, agent, n_episodes=2000, n_validations=50, eps_start=1.0, eps_end=0.
     k = 2
     frame_skiped = 1
 
-
     t = 0
     while True:
         env_info = env.reset(train_mode=True)[brain_name] # reset the environment
