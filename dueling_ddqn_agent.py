@@ -29,11 +29,11 @@ import math
 import copy
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 32         # minibatch size
+BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
-ALPHA = 2.5e-4          # for soft update of target parameters
-TAU = int(1e3)
-LR = 6.25e-5            # learning rate 
+ALPHA = 2.5e-3          # for soft update of target parameters
+TAU = int(1e2)
+LR = 6.25e-4            # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
 
 PER_E = 1e-6
@@ -143,18 +143,12 @@ class Agent():
         elementwise_loss = mse(Q_expected, Q_targets)
         loss = torch.mean(isw*elementwise_loss)
 
-        # save old local network parameters
-        qnetwork_old = copy.deepcopy(self.qnetwork_local.state_dict())
-
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.qnetwork_local.common[-3].weight.grad *= 1.0/math.sqrt(2.0)
         torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
         self.optimizer.step()
-
-        # get updated local network parameters
-        qnetwork_new = self.qnetwork_local.state_dict()
 
         # get update parameters rate (L2) during last optimization step
         diff = sum((x - y).norm() for x, y in zip(self.qnetwork_local.state_dict().values(), self.qnetwork_target.state_dict().values()))
@@ -163,7 +157,7 @@ class Agent():
         loss_for_prior = elementwise_loss.detach().cpu().numpy()
         new_priorities = loss_for_prior + PER_E
         self.memory.update_priorities(inds, new_priorities)
-
+        
         return diff.item()
 
     def soft_update(self, local_model, target_model, tau):
@@ -205,16 +199,21 @@ class ReplayBuffer:
 
 
         self.action_size = action_size
-        self.memory = np.array([None]*self.tree_capacity)#deque(maxlen=buffer_size)  
+        self.memory = []#deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["t", "state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+
+        self.b = 1.0
 
     
     def add(self, t, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(t % self.tree_capacity, state, action, reward, next_state, done)
-        self.memory[t % self.tree_capacity] = e
+        e = self.experience(state, action, reward, next_state, done)
+        if t >= self.tree_capacity:
+            self.memory[t % self.tree_capacity] = e
+        else:
+            self.memory.append(e)
 
         self.sum_tree[t % self.tree_capacity] = self.max_priority ** PER_A
         self.min_tree[t % self.tree_capacity] = self.max_priority ** PER_A
@@ -231,7 +230,6 @@ class ReplayBuffer:
             upperbound = random.uniform(a, b)
             idx = self.sum_tree.retrieve(upperbound)
             indices.append(idx)
-
 
         idxs = np.vstack(indices).astype(np.int)
         states = torch.from_numpy(np.vstack([self.memory[i].state for i in indices])).float().to(device)
@@ -260,7 +258,6 @@ class ReplayBuffer:
         # get max weight
         p_min = self.min_tree.min() / self.sum_tree.sum()
         max_weight = (p_min * len(self.memory)) ** (-self.b)
-        # print(self.b)
         
         # calculate weights
         p_sample = self.sum_tree[idx] / self.sum_tree.sum()
