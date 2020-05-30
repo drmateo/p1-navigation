@@ -32,69 +32,74 @@ BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
 ALPHA = 2.5e-3          # for soft update of target parameters
-TAU = int(1e2)
+TAU = int(1e2)          # how often to update the target network
 LR = 6.25e-4            # learning rate 
-UPDATE_EVERY = 4        # how often to update the network
-
-PER_E = 1e-6
-PER_A = 0.6
-PER_B = 0.4
+UPDATE_EVERY = 4        # how often to update the local network
+PER_EPS = 1e-6          # minimum value for priorities
+PER_ALPHA = 0.6         # PER alpha value [0, 1], as closer to 0 closer to uniform sampling behavior
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Agent():
     """Interacts with and learns from the environment."""
 
-    def __init__(self, state_size, action_size, seed):
+    def __init__(self, state_size, action_size):
         """Initialize an Agent object.
         
         Params
         ======
             state_size (int): dimension of each state
             action_size (int): dimension of each action
-            seed (int): random seed
         """
         self.state_size = state_size
         self.action_size = action_size
-        self.seed = random.seed(seed)
 
         # Q-Network
-        self.qnetwork_local = QNetwork(state_size, action_size, seed).to(device)
-        self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
-        self.optimizer = optim.RMSprop(self.qnetwork_local.parameters(), lr=LR, momentum=.95)
-        #self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR / 4.0)
+        self.qnetwork_local = QNetwork(state_size, action_size).to(device)
+        self.qnetwork_target = QNetwork(state_size, action_size).to(device)
+        # self.optimizer = optim.RMSprop(self.qnetwork_local.parameters(), lr=LR, momentum=.95)
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
 
         # clone local parameters into target network
         self.qnetwork_target.load_state_dict(self.qnetwork_local.state_dict())
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, PER_ALPHA)
+
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
 
-    
-    def step(self, state, action, reward, next_state, done):
+    def step(self, state, action, reward, next_state, done, beta = 0.):
+        """Steppnig actor forward using new SARS tuple.
+        
+        Params
+        ======
+            state (numpy.array): current observation
+            action (int): action
+            reward (int): reward retrieve
+            next_state (numpy.array): next observation
+            done (int): is episode ended
+            beta (float): importance sampling weight value [0, 1]
+        """
         # Save experience in replay memory
         self.memory.add(self.t_step, state, action, reward, next_state, done)
-        
-        diff = 0.0
+        self.t_step += 1
 
         # Learn every UPDATE_EVERY time steps.
-        self.t_step += 1
+        err = 0.0
         if self.t_step % UPDATE_EVERY == 0:
             # If enough samples are available in memory, get random subset and learn
             if len(self.memory) > BATCH_SIZE:
-                experiences = self.memory.sample()
-                diff = self.learn(experiences, GAMMA)
+                experiences = self.memory.sample(beta)
+                err = self.learn(experiences, GAMMA)
 
-        # ------------------- update target network ------------------- #
-        if self.t_step % TAU == 0:
-            if len(self.memory) > BATCH_SIZE:
-                self.soft_update(self.qnetwork_local, self.qnetwork_target, ALPHA)    
+                # Update target network 
+                if self.t_step % (UPDATE_EVERY*TAU) == 0:
+                    self.soft_update(self.qnetwork_local, self.qnetwork_target, ALPHA)    
 
-        return diff, False if diff == 0.0 else True
+        return err, False if err == 0.0 else True
 
-    def act(self, state, eps=0., beta=PER_B):
+    def act(self, state, eps=0.):
         """Returns actions for given state as per current policy.
         
         Params
@@ -107,8 +112,6 @@ class Agent():
         with torch.no_grad():
             action_values = self.qnetwork_local(state)
         self.qnetwork_local.train()
-
-        self.memory.b = beta
 
         # Epsilon-greedy action selection
         if random.random() > eps:
@@ -146,19 +149,19 @@ class Agent():
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
-        self.qnetwork_local.common[-3].weight.grad *= 1.0/math.sqrt(2.0)
-        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0)
+        self.qnetwork_local.common[-3].weight.grad *= 1.0/math.sqrt(2.0) # correct grad because the addition op. between V and A networks
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0) # clipping grad for stability
         self.optimizer.step()
 
         # get update parameters rate (L2) during last optimization step
-        diff = sum((x - y).norm() for x, y in zip(self.qnetwork_local.state_dict().values(), self.qnetwork_target.state_dict().values()))
+        err = sum((x - y).norm() for x, y in zip(self.qnetwork_local.state_dict().values(), self.qnetwork_target.state_dict().values()))
 
         # PER: update priorities
         loss_for_prior = elementwise_loss.detach().cpu().numpy()
-        new_priorities = loss_for_prior + PER_E
+        new_priorities = loss_for_prior + PER_EPS
         self.memory.update_priorities(inds, new_priorities)
         
-        return diff.item()
+        return err.item()
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
@@ -177,7 +180,7 @@ class Agent():
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 
-    def __init__(self, action_size, buffer_size, batch_size, seed):
+    def __init__(self, action_size, buffer_size, batch_size, alpha):
         """Initialize a ReplayBuffer object.
 
         Params
@@ -185,9 +188,10 @@ class ReplayBuffer:
             action_size (int): dimension of each action
             buffer_size (int): maximum size of buffer
             batch_size (int): size of each training batch
-            seed (int): random seed
+            alpha (float): alpha PER value 
         """
         self.max_priority = 1.0
+        self.alpha = alpha
 
         # capacity must be positive and a power of 2.
         self.tree_capacity = 1
@@ -197,29 +201,41 @@ class ReplayBuffer:
         self.sum_tree = SumSegmentTree(self.tree_capacity)
         self.min_tree = MinSegmentTree(self.tree_capacity)
 
-
         self.action_size = action_size
-        self.memory = []#deque(maxlen=buffer_size)  
+        self.memory = [] 
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
-        self.seed = random.seed(seed)
-
-        self.b = 1.0
-
     
     def add(self, t, state, action, reward, next_state, done):
         """Add a new experience to memory."""
         e = self.experience(state, action, reward, next_state, done)
+
+        idx = t % self.tree_capacity
         if t >= self.tree_capacity:
-            self.memory[t % self.tree_capacity] = e
+            self.memory[idx] = e
         else:
             self.memory.append(e)
 
-        self.sum_tree[t % self.tree_capacity] = self.max_priority ** PER_A
-        self.min_tree[t % self.tree_capacity] = self.max_priority ** PER_A
+        # insert experience index in priority tree
+        self.sum_tree[idx] = self.max_priority ** self.alpha
+        self.min_tree[idx] = self.max_priority ** self.alpha
 
-    def sample(self):
-        """Randomly sample a batch of experiences from memory."""
+    def sample(self, beta):
+        """Sampling a batch of relevant experiences from memory."""
+        indices = self.relevant_sample_indx()
+
+        idxs = np.vstack(indices).astype(np.int)
+        states = torch.from_numpy(np.vstack([self.memory[i].state for i in indices])).float().to(device)
+        actions = torch.from_numpy(np.vstack([self.memory[i].action for i in indices])).long().to(device)
+        rewards = torch.from_numpy(np.vstack([self.memory[i].reward for i in indices])).float().to(device)
+        next_states = torch.from_numpy(np.vstack([self.memory[i].next_state for i in indices])).float().to(device)
+        dones = torch.from_numpy(np.vstack([self.memory[i].done for i in indices]).astype(np.uint8)).float().to(device)
+        weights = torch.from_numpy(np.array([self.isw(i, beta) for i in indices])).float().to(device)
+
+        return (idxs, states, actions, rewards, next_states, dones, weights)
+
+    def relevant_sample_indx(self):
+        """Selecting most informative sample indices."""
         indices = []
         p_total = self.sum_tree.sum(0, len(self) - 1)
         segment = p_total / self.batch_size
@@ -231,15 +247,7 @@ class ReplayBuffer:
             idx = self.sum_tree.retrieve(upperbound)
             indices.append(idx)
 
-        idxs = np.vstack(indices).astype(np.int)
-        states = torch.from_numpy(np.vstack([self.memory[i].state for i in indices])).float().to(device)
-        actions = torch.from_numpy(np.vstack([self.memory[i].action for i in indices])).long().to(device)
-        rewards = torch.from_numpy(np.vstack([self.memory[i].reward for i in indices])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([self.memory[i].next_state for i in indices])).float().to(device)
-        dones = torch.from_numpy(np.vstack([self.memory[i].done for i in indices]).astype(np.uint8)).float().to(device)
-        weights = torch.from_numpy(np.array([self.isw(i) for i in indices])).float().to(device)
-
-        return (idxs, states, actions, rewards, next_states, dones, weights)
+        return indices
 
     def update_priorities(self, indices, priorities):
         """Update priorities of sampled transitions."""
@@ -249,19 +257,20 @@ class ReplayBuffer:
             assert priority > 0
             assert 0 <= idx < len(self)
             
-            self.sum_tree[idx] = priority ** PER_A
-            self.min_tree[idx] = priority ** PER_A
+            self.sum_tree[idx] = priority ** self.alpha
+            self.min_tree[idx] = priority ** self.alpha
 
             self.max_priority = max(self.max_priority, priority)
 
-    def isw(self, idx):
+    def isw(self, idx, beta):
+        """Compute Importance Sample Weight."""
         # get max weight
         p_min = self.min_tree.min() / self.sum_tree.sum()
-        max_weight = (p_min * len(self.memory)) ** (-self.b)
+        max_weight = (p_min * len(self)) ** (-beta)
         
         # calculate weights
         p_sample = self.sum_tree[idx] / self.sum_tree.sum()
-        weight = (p_sample * len(self)) ** (-self.b)
+        weight = (p_sample * len(self)) ** (-beta)
         is_weight = weight / max_weight
 
         return is_weight

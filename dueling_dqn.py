@@ -19,47 +19,48 @@ import torch.nn.functional as F
 class QNetwork(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed, fc1_units=256, fc2_units=64, fc3_units=16):
+    def __init__(self, state_size, action_size, fc1_units=512, fc2_units=64):
         """Initialize parameters and build model.
         Params
         ======
             state_size (int): Dimension of each state
             action_size (int): Dimension of each action
-            seed (int): Random seed
             fc1_units (int): Number of nodes in first hidden layer
             fc2_units (int): Number of nodes in second hidden layer
         """
         super(QNetwork, self).__init__()
-        self.seed = torch.manual_seed(seed)
         
+        proba_hidden_layer = 0.1
+        proba_input_layer = 0.4
+
         # set common feature layer
         self.common = nn.Sequential(
             nn.Linear(state_size, fc1_units),
+            nn.Dropout(p=proba_input_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
             nn.Linear(fc1_units, fc1_units),
+            nn.Dropout(p=proba_hidden_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
             nn.Linear(fc1_units, fc1_units),
+            nn.Dropout(p=proba_hidden_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
             nn.Linear(fc1_units, fc2_units),
+            nn.Dropout(p=proba_hidden_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
         )
 
         self.value = nn.Sequential(
-            nn.Linear(fc2_units, fc3_units),
+            nn.Linear(fc2_units, fc2_units),
+            nn.Dropout(p=proba_hidden_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(fc3_units, 1),
+            nn.Linear(fc2_units, 1),
         )
 
         self.advantage = nn.Sequential(
-            nn.Linear(fc2_units, fc3_units),
+            nn.Linear(fc2_units, fc2_units),
+            nn.Dropout(p=proba_hidden_layer),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(fc3_units, 4),
+            nn.Linear(fc2_units, action_size),
         )
 
     def forward(self, state):
