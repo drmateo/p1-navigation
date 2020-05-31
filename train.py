@@ -308,8 +308,8 @@ def dqn(env, brain_name, agent, action_size, state_size, k=1, eps_start=1.0, eps
                 eps, beta, error, do_visualization, info_update_rate)
 
         # save qnetwork if procced
-        if track['valid_score_mean'][-1]>=3.0:
-            torch.save(agent.qnetwork_local.state_dict(), 'checkpoint.pth')
+        if i_episode%1000 == 0 and track['valid_score'][-1]>=3.0:
+            torch.save(agent.qnetwork_local.state_dict(), 'checkpoint_%d_%d.pth'%(i_episode, track['valid_score'][-1]))
 
         # step forward
         eps = max(eps_end, eps_decay*eps)                   # decrease exponentialy epsilon

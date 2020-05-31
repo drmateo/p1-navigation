@@ -28,29 +28,39 @@ from dueling_ddqn_agent import Agent
 
 if __name__ == "__main__":
 
-    env = UnityEnvironment(file_name="Banana.x86_64", seed=int(time.time()*1e6) % int(2^18))
+    env = UnityEnvironment(file_name="Banana.x86_64", seed=int(time.time()*1e6) % int(2**18))
 
     # get the default brain
     brain_name = env.brain_names[0]
     brain = env.brains[brain_name]
+    env_info = env.reset(train_mode=True)[brain_name]
+    action_size = brain.vector_action_space_size        # number of actions
+    state_size = len(env_info.vector_observations[0])   # observation size
+    k=2
 
-    agent = Agent(state_size=37, action_size=4, seed=int(time.time()*1e6))
+    agent = Agent(state_size=state_size*k, action_size=action_size)
     agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     
     for i in range(3):
         score = 0
         env_info = env.reset(train_mode=False)[brain_name] # reset the environment
         state = env_info.vector_observations[0]            # get the current state
-        while True:
-            action = agent.act(state)
-            env_info = env.step(action)[brain_name]        # send the action to the environment
-            next_state = env_info.vector_observations[0]   # get the next state
-            reward = env_info.rewards[0]                   # get the reward
-            done = env_info.local_done[0]                  # see if episode has finished
-            state = next_state                             # roll over the state to next time step
-            score += reward                                # update the score
-            if done:                                       # exit loop if episode finished
-                break
+
+        state_stack = deque(maxlen=k)
+        for i in range(1,k):
+            state_stack.append(state)
+
+        done = False
+        while not done:
+            state_stack.append(state)
+            s = np.array(list(state_stack)).flatten()
+            action = agent.act(s, eps=0.001)
+
+            env_info = env.step(action)[brain_name]             # send the action to the environment
+            reward = env_info.rewards[0]                        # get the reward
+            done = env_info.local_done[0]                       # see if episode has finished
+            state = env_info.vector_observations[0]             # get the next state
+            score += reward                                     # update the score
 
         print('\rEpisode {}\t Cumulative reward: {:.2f}'.format(i, score))
                 
