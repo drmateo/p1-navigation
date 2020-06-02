@@ -45,6 +45,7 @@ if __name__ == "__main__":
 
     
     scores = []
+    mean_score = 0
     for t in range(1, n_evaluations+1):
         score = 0
         env_info = env.reset(train_mode=False)[brain_name] # reset the environment
@@ -66,11 +67,11 @@ if __name__ == "__main__":
             state = env_info.vector_observations[0]             # get the next state
             score += reward                                     # update the score
             
-            print('\rEpisode {}\tCumulative Reward: {}, avg(CR): {:.2f}'.format(t, int(score), mean_score), end="")
+            print('\rEpisode {}\tCumulative Reward: {}, \tavg(CR): {:.2f}'.format(t, int(score), mean_score), end="")
         
         scores.append(score)
         mean_score = np.mean(scores)
         if t%10==0:
-            print('\rEpisode {}\tCumulative Reward: {}, avg(CR): {:.2f}'.format(t, int(score), mean_score))
+            print('\rEpisode {}\tCumulative Reward: {}, \tavg(CR): {:.2f}'.format(t, int(score), mean_score))
                 
     env.close()
