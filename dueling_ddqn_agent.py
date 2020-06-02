@@ -32,11 +32,12 @@ BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
 ALPHA = 2.5e-3          # for soft update of target parameters
-TAU = int(1e2)          # how often to update the target network
-LR = 6.25e-4            # learning rate 
+TAU = int(1e1)          # how often to update the target network
+LR = 1.2e-4            # learning rate 
 UPDATE_EVERY = 4        # how often to update the local network
-PER_EPS = 1e-6          # minimum value for priorities
+PER_EPS = 1e-6          # minimum priority value
 PER_ALPHA = 0.6         # PER alpha value [0, 1], as closer to 0 closer to uniform sampling behavior
+CLIPPING = 10.0
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -146,15 +147,19 @@ class Agent():
         elementwise_loss = mse(Q_expected, Q_targets)
         loss = torch.mean(isw*elementwise_loss)
 
+        old_values = copy.deepcopy(list(self.qnetwork_local.state_dict().values()))
+
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
-        self.qnetwork_local.common[-3].weight.grad *= 1.0/math.sqrt(2.0) # correct grad because the addition op. between V and A networks
-        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 10.0) # clipping grad for stability
+        self.qnetwork_local.common[-2].weight.grad *= 1.0/math.sqrt(2.0) # correct grad because the addition op. between V and A networks
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), CLIPPING) # clipping grad for stability
         self.optimizer.step()
 
+        new_values = copy.deepcopy(list(self.qnetwork_local.state_dict().values()))
+
         # get update parameters rate (L2) during last optimization step
-        err = sum((x - y).norm() for x, y in zip(self.qnetwork_local.state_dict().values(), self.qnetwork_target.state_dict().values()))
+        err = sum((x - y).norm() for x, y in zip(old_values, new_values))
 
         # PER: update priorities
         loss_for_prior = elementwise_loss.detach().cpu().numpy()

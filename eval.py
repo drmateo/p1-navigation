@@ -37,11 +37,15 @@ if __name__ == "__main__":
     action_size = brain.vector_action_space_size        # number of actions
     state_size = len(env_info.vector_observations[0])   # observation size
     k=2
+    eps=0.001
+    n_evaluations=100
 
     agent = Agent(state_size=state_size*k, action_size=action_size)
-    agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
+    agent.qnetwork_local.load_state_dict(torch.load('model.pt'))
+
     
-    for i in range(3):
+    scores = []
+    for t in range(1, n_evaluations+1):
         score = 0
         env_info = env.reset(train_mode=False)[brain_name] # reset the environment
         state = env_info.vector_observations[0]            # get the current state
@@ -54,14 +58,19 @@ if __name__ == "__main__":
         while not done:
             state_stack.append(state)
             s = np.array(list(state_stack)).flatten()
-            action = agent.act(s, eps=0.001)
+            action = agent.act(s, eps=eps)
 
             env_info = env.step(action)[brain_name]             # send the action to the environment
             reward = env_info.rewards[0]                        # get the reward
             done = env_info.local_done[0]                       # see if episode has finished
             state = env_info.vector_observations[0]             # get the next state
             score += reward                                     # update the score
-
-        print('\rEpisode {}\t Cumulative reward: {:.2f}'.format(i, score))
+            
+            print('\rEpisode {}\tCumulative Reward: {}, avg(CR): {:.2f}'.format(t, int(score), mean_score), end="")
+        
+        scores.append(score)
+        mean_score = np.mean(scores)
+        if t%10==0:
+            print('\rEpisode {}\tCumulative Reward: {}, avg(CR): {:.2f}'.format(t, int(score), mean_score))
                 
     env.close()
