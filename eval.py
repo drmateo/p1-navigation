@@ -12,6 +12,7 @@
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
 
+import time
 import random
 import torch
 import numpy as np
@@ -21,7 +22,6 @@ import matplotlib.pyplot as plt
 from unityagents import UnityEnvironment
 import numpy as np
 
-import time
 
 from dueling_ddqn_agent import Agent
 

@@ -298,8 +298,8 @@ def update_info(monitor, track, i_episode, train_score, valid_score, eps, beta, 
 
 def dqn(env, brain_name, agent, action_size, state_size, k=1, eps_start=1.0, eps_end=0.01,
         eps_decay=0.995, beta_start=0.4, stop_crit=1e-3, n_episodes=2000, n_samples=5000,
-        n_validations=4, window_size=500, do_visualization=False, info_update_rate=100, 
-        pretrain=None, goal_score=3.0):
+        n_validations=1, window_size=100, do_visualization=True, info_update_rate=50, 
+        pretrain=None, goal_score=3.0, early_stop=False):
     """Deep Q-Learning.
     
     Params
@@ -369,6 +369,8 @@ def dqn(env, brain_name, agent, action_size, state_size, k=1, eps_start=1.0, eps
         # save qnetwork if procced
         if i_episode%info_update_rate == 0 and (track['valid_score_mean'][-1]>=goal_score or track['train_score_mean'][-1]>=goal_score):
             torch.save(agent.qnetwork_local.state_dict(), 'checkpoint_%d_%d.pth'%(i_episode, track['valid_score_mean'][-1]))
+            if early_stop:
+                break
 
         # step forward
         eps = max(eps_end, eps_decay*eps)                   # decrease exponentialy epsilon
