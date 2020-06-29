@@ -139,3 +139,6 @@ Banana*
 
 # Log files
 *.log
+
+training_checkpoints/
+checkpoint_350_1.pth
